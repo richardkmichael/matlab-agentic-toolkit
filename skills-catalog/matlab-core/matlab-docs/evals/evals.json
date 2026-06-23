@@ -1,0 +1,140 @@
+[
+  {
+    "id": "lookup-function-doc",
+    "name": "Route a function lookup through the skill",
+    "description": "Tests that the agent looks up a function by running the skill's script (extract_matlab_doc.py) rather than answering from memory or fetching the page itself. Skill use is verified by the routing assertion (a1), which requires inspecting the agent's tool calls, not its answer text: a capable model can produce interp1's content from memory, so the content check (a2) is only a sanity check that a relevant, doc-grounded answer was produced, not proof the skill was used. Deterministic resolution correctness (interp1 to matlab/ref/double.interp1.html, the search tier, not-found, release pinning) is covered by the script unit test, scripts/test_extract_matlab_doc.py, not by these evals. Assumes the lookup resolves (local docs installed, or network access to mathworks.com).",
+    "prompt": "What does the MATLAB function interp1 do? Check the docs.",
+    "expected_output": "Agent runs extract_matlab_doc.py interp1 (not WebFetch or raw curl) and reports interp1 as 1-D data interpolation from the returned doc.",
+    "assertions": [
+      {
+        "id": "a1",
+        "type": "convention_followed",
+        "description": "Routes the lookup through the skill's script, not WebFetch or raw curl (verified against the agent's tool calls; requires a transcript-aware judge)",
+        "expected": "The agent's tool calls show it invoked extract_matlab_doc.py with 'interp1'. It did not WebFetch a mathworks.com URL or roll its own curl/grep against the docs."
+      },
+      {
+        "id": "a2",
+        "type": "output_contains",
+        "description": "Sanity check that a relevant doc-grounded answer was produced (not proof the skill was used)",
+        "expected": "1-D data interpolation"
+      }
+    ]
+  },
+  {
+    "id": "lookup-toolbox-function-via-search",
+    "name": "Route a toolbox-function lookup through the skill",
+    "description": "bode is a Control System Toolbox function; when that toolbox is not installed locally the skill resolves it through the MathWorks doc-search tier. Tests that the agent routes the lookup through the skill (verified via tool calls) even for a function outside base MATLAB. The content check is a sanity check only; the search-tier resolution itself is covered deterministically by scripts/test_extract_matlab_doc.py. Assumes the lookup resolves (the toolbox installed locally, or network access to mathworks.com).",
+    "prompt": "What does the MATLAB function bode do? Check the docs.",
+    "expected_output": "Agent runs extract_matlab_doc.py bode (not WebFetch or raw curl) and reports that bode gives the frequency response of a dynamic system, from the returned doc.",
+    "assertions": [
+      {
+        "id": "a1",
+        "type": "convention_followed",
+        "description": "Routes the lookup through the skill's script, not WebFetch or raw curl (verified against the agent's tool calls)",
+        "expected": "The agent's tool calls show it invoked extract_matlab_doc.py with 'bode'. It did not WebFetch a mathworks.com URL or roll its own curl/grep."
+      },
+      {
+        "id": "a2",
+        "type": "output_contains",
+        "description": "Sanity check that a relevant doc-grounded answer was produced",
+        "expected": "frequency response"
+      }
+    ]
+  },
+  {
+    "id": "lookup-pasted-url",
+    "name": "Route a pasted mathworks.com URL through the skill, not WebFetch",
+    "description": "The user pastes a mathworks.com doc URL, the input the agent is most tempted to fetch directly. Tests that the agent passes the URL to the skill's script (which curl-fetches and cleans it) rather than WebFetching it. Skill use is verified via the agent's tool calls; the content check is a sanity check. Assumes network access to mathworks.com (or the page installed locally).",
+    "prompt": "Here's a MATLAB doc page: https://www.mathworks.com/help/matlab/ref/strsplit.html . What does this function do? Check it.",
+    "expected_output": "Agent runs extract_matlab_doc.py with the pasted URL (not WebFetch on the URL) and reports that strsplit splits a string at specified delimiters, from the returned doc.",
+    "assertions": [
+      {
+        "id": "a1",
+        "type": "convention_followed",
+        "description": "Passes the pasted URL to the skill's script rather than WebFetching it (verified against the agent's tool calls)",
+        "expected": "The agent's tool calls show it passed the mathworks.com URL to extract_matlab_doc.py. It did not WebFetch the URL or curl it directly, even though a full URL was handed to it."
+      },
+      {
+        "id": "a2",
+        "type": "output_contains",
+        "description": "Sanity check that a relevant doc-grounded answer was produced",
+        "expected": "delimiter"
+      }
+    ]
+  },
+  {
+    "id": "verify-before-recommending",
+    "name": "Consult the docs through the skill before recommending",
+    "description": "Tests verification-before-recommending behavior: before recommending griddedInterpolant in place of a repeated interp1 loop, the agent consults the docs through the skill to confirm it supports linear interpolation, rather than asserting from memory. Skill use is verified via the agent's tool calls; the content check is a sanity check that it reported the confirmation. (Mirrors the alternative recommended in the matlab-profile interp1-loop eval.)",
+    "prompt": "I'm about to suggest replacing a slow per-point interp1 loop with a single griddedInterpolant. Before I do, confirm from the MATLAB docs that griddedInterpolant supports linear interpolation.",
+    "expected_output": "Agent looks up griddedInterpolant through the skill and confirms from the returned doc that 'linear' is a supported interpolation method, rather than answering from memory.",
+    "assertions": [
+      {
+        "id": "a1",
+        "type": "convention_followed",
+        "description": "Consults the docs through the skill to verify, not from memory (verified against the agent's tool calls)",
+        "expected": "The agent's tool calls show it ran extract_matlab_doc.py with 'griddedInterpolant' (or a mathworks.com doc URL through the same script). It did not simply assert the answer or WebFetch the page."
+      },
+      {
+        "id": "a2",
+        "type": "output_contains",
+        "description": "Sanity check that it reported the confirmation from the doc",
+        "expected": "linear"
+      }
+    ]
+  },
+  {
+    "id": "complete-arglist-from-doc",
+    "name": "Produce the complete, current name-value argument list",
+    "description": "Asks for the COMPLETE set of trainingOptions name-value arguments. trainingOptions has a large option set across its solvers, including several obscure ones (the L-BFGS damping and line-search options, the categorical-encoding options). Producing all of them -- and none of the legacy or non-existent names -- is what an actual lookup through the skill yields, so this case discriminates skill use through the answer's content. a1 is the direct evidence the skill was used (the routing, verified against the agent's tool calls). a2 checks that the answer includes obscure options a complete doc-grounded list contains; a3 checks that it does not emit a non-existent name (InitialStepLength; the real option is InitialStepSize). a2 and a3 are content checks rather than tool-trace checks, so unlike a1 and the script unit test they are not strictly deterministic -- they corroborate skill use by testing for the completeness and accuracy an actual lookup produces. Assumes the lookup resolves (local docs installed, or network access to mathworks.com).",
+    "prompt": "List every name-value argument that MATLAB's trainingOptions accepts -- the complete set, don't omit any.",
+    "expected_output": "Agent runs extract_matlab_doc.py trainingOptions and reports the full set of name-value options from the returned doc, including the less common ones (e.g. InitialInverseHessianFactor, MaxNumLineSearchIterations, CategoricalInputEncoding), and does not invent names such as InitialStepLength.",
+    "assertions": [
+      {
+        "id": "a1",
+        "type": "convention_followed",
+        "description": "Routes the lookup through the skill's script, not WebFetch or raw curl (verified against the agent's tool calls)",
+        "expected": "The agent's tool calls show it invoked extract_matlab_doc.py with 'trainingOptions'. It did not WebFetch a mathworks.com URL or roll its own curl/grep."
+      },
+      {
+        "id": "a2",
+        "type": "output_contains_any",
+        "description": "Reports obscure options that a complete doc-grounded list includes",
+        "expected": ["InitialInverseHessianFactor", "MaxNumLineSearchIterations", "CategoricalInputEncoding", "DampingDecreaseFactor", "MaxDampingFactor"]
+      },
+      {
+        "id": "a3",
+        "type": "output_excludes",
+        "description": "Does not emit a non-existent option name",
+        "expected": "InitialStepLength"
+      }
+    ]
+  },
+  {
+    "id": "not-found-no-fallback",
+    "name": "Handle an unresolved lookup without bypassing or fabricating",
+    "description": "When a name resolves neither in the local catalog nor through MathWorks's doc search, the script writes 'Could not find documentation for: <name>' and exits non-zero. This is the one behavior fully verifiable from the agent's response, because fabrication versus an honest not-found is visible in the text. Tests that the agent treats the not-found result as information: it does not invent a definition, and it does not bypass the skill (WebFetch, raw curl, or find/grep). Any retry stays within the same script.",
+    "prompt": "Look up the documentation for the MATLAB function frobnicate8 (I'm not sure that's the exact name).",
+    "expected_output": "Agent runs the skill, gets the not-found message, may retry through the same script with a different target, does NOT fall back to WebFetch/curl/find/grep, and does NOT fabricate documentation; if unresolved it says so honestly.",
+    "assertions": [
+      {
+        "id": "a1",
+        "type": "convention_followed",
+        "description": "Does not fabricate a definition for the unresolved name (verifiable from the response text)",
+        "expected": "Does not invent a purpose, syntax, or behavior for frobnicate8. Treats 'Could not find documentation for: frobnicate8' as a genuine not-found and tells the user the documentation is not findable."
+      },
+      {
+        "id": "a2",
+        "type": "convention_followed",
+        "description": "Does not bypass the skill (verified against the agent's tool calls)",
+        "expected": "The agent's tool calls show no fallback to WebFetch, a hand-rolled curl, or find/grep against ~/Documents/MATLAB or the MATLAB application bundle."
+      },
+      {
+        "id": "a3",
+        "type": "convention_followed",
+        "description": "Any retry stays within the skill",
+        "expected": "If it retries, it does so through the same extract_matlab_doc.py script with a different target (an alternate spelling or namespacing, or a mathworks.com topic URL)."
+      }
+    ]
+  }
+]
