@@ -1,0 +1,11 @@
+schema_version: 1
+license: MathWorks BSD-3-Clause
+scope: cross-product
+version: "1.0"
+human-description: Investigate MATLAB performance and memory problems with the profiler.
+matlab-release: ">=R2025a"
+requires-tools: []
+requires-skills: []
+requires-products:
+  - MATLAB
+toolkit: matlab-agentic-toolkit

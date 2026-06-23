@@ -1,0 +1,168 @@
+{
+  "skill": "matlab-profile",
+  "version": "1.0",
+  "evals": [
+    {
+      "id": "phased-array-memory-hotspot",
+      "name": "Find the memory hotspot in a phased-array directivity computation",
+      "description": "Reuses the optimize-memory phased-array fixture. computeArrayDirectivity allocates ~348 MB (66 MB peak) for an 8x8 URA over a 360x180 grid. Under -memory on the profiler attributes allocation per line, pinning the avoidable waste -- repmat(angles,1,N) replicating the angle grid (line 24, ~66 MB) and elemPattern evaluated over all N*M points redundantly (line 29, ~33 MB) -- versus the necessary steering-vector lines (which also allocate ~66 MB). The agent ranks the hot function, reads the per-line memory breakdown, and distinguishes avoidable from necessary allocation.",
+      "prompt": "computeArrayDirectivity.m uses a lot of memory as I scale up the array and the angle grid. Profile it and tell me where the memory is going.",
+      "context": {
+        "files": ["evals/files/computeArrayDirectivity.m"],
+        "setup": "Base MATLAB. Uses the profiler's -memory mode (verified on R2025b)."
+      },
+      "assertions": [
+        {
+          "id": "a1",
+          "type": "output_contains",
+          "description": "Ran a memory pass, not a time pass",
+          "expected": "-memory"
+        },
+        {
+          "id": "a2",
+          "type": "convention_followed",
+          "description": "Ranks computeArrayDirectivity as the dominant allocator",
+          "expected": "Reports computeArrayDirectivity as the function with by far the largest memory (allocated on the order of hundreds of MB, peak ~66 MB), well above every other function. Profiler/runtime internals such as cellfun or which are not mistaken for the hotspot."
+        },
+        {
+          "id": "a3",
+          "type": "convention_followed",
+          "description": "Names the avoidable allocation from the per-line memory breakdown",
+          "expected": "From the per-line memory breakdown (ExecutedLines memory columns), identifies the repmat(angles,1,N) line (the angle-grid replication, ~66 MB) and/or the redundant elemPattern evaluation (~33 MB) as the avoidable allocation, and distinguishes them from the necessary steering-vector lines (which also allocate ~66 MB). Pointing only at the function without naming the avoidable line(s) does not count."
+        },
+        {
+          "id": "a4",
+          "type": "convention_followed",
+          "description": "Does not mischaracterize it as a leak",
+          "expected": "Does not claim a memory leak. Allocated and freed are nearly equal (~344 MB each), so this is transient over-allocation, not accumulation; a leak claim is incorrect."
+        },
+        {
+          "id": "a5",
+          "type": "convention_followed",
+          "description": "Measure-only: reports without modifying the code",
+          "expected": "Reports the memory finding and does not edit computeArrayDirectivity.m or apply an optimization: matlab-profile measures and reports; the fix is out of scope."
+        }
+      ]
+    },
+    {
+      "id": "directivity-before-after-memory",
+      "name": "Compare original vs memory-optimized directivity (allocation, not peak)",
+      "description": "computeArrayDirectivityFast is a same-result rewrite that drops the repmat angle-grid replication and the redundant per-element pattern evaluation. It cuts total allocated memory ~49% (338 -> 173 MB) but peak is unchanged (~66 MB both), since the steering-vector arrays set the peak. A before/after that only compares peak would wrongly conclude 'no improvement'; the win is in allocation churn.",
+      "prompt": "I have two versions of this computation: computeArrayDirectivity.m and a memory-optimized rewrite computeArrayDirectivityFast.m. Profile both and tell me whether the rewrite actually uses less memory, and by how much.",
+      "context": {
+        "files": ["evals/files/computeArrayDirectivity.m", "evals/files/computeArrayDirectivityFast.m"],
+        "setup": "Base MATLAB. Uses the profiler's -memory mode (verified on R2025b)."
+      },
+      "assertions": [
+        {
+          "id": "a1",
+          "type": "output_contains",
+          "description": "Ran memory passes",
+          "expected": "-memory"
+        },
+        {
+          "id": "a2",
+          "type": "convention_followed",
+          "description": "Profiles both versions and compares them",
+          "expected": "Profiles both computeArrayDirectivity and computeArrayDirectivityFast and compares the two profiles (two runs, e.g. via the run catalog and compare_runs), not just one or a code read."
+        },
+        {
+          "id": "a3",
+          "type": "convention_followed",
+          "description": "Improvement is reduced total allocation, not peak",
+          "expected": "Reports the rewrite cuts total allocated memory substantially (~165 MB / ~50%, e.g. ~338 down to ~173 MB) and recognizes PEAK is essentially unchanged (~66 MB both) because the steering-vector arrays set the peak. Concluding 'no improvement' from the unchanged peak, or claiming a peak reduction, is incorrect."
+        },
+        {
+          "id": "a4",
+          "type": "convention_followed",
+          "description": "Confirms the two versions produce the same result",
+          "expected": "Before trusting the comparison, confirms the two versions compute the same directivity (identical output), so the saving is not from doing less work."
+        },
+        {
+          "id": "a5",
+          "type": "convention_followed",
+          "description": "Measure-only: does not edit either file",
+          "expected": "Reports the comparison and does not edit computeArrayDirectivity.m or computeArrayDirectivityFast.m or apply further optimization. A scratch profiling driver is fine; modifying the provided files is not."
+        }
+      ]
+    },
+    {
+      "id": "interp1-loop-recommend-griddedinterpolant",
+      "name": "Recommend a build-once interpolation for a per-point interp1 loop (without applying it)",
+      "description": "interpolateFrames calls interp1 per query point against a shared curve, so interp1 reprocesses the breakpoints (parseinputs, reshapeAndSortXandV) on every one of ~40,000 calls -- ~96% of runtime. Doing the breakpoint setup once (e.g. a griddedInterpolant, or a vectorized interp1) is ~47x faster with identical output. Exercises the recommend-but-don't-apply flow: profile, hypothesize a diagnosis-driven alternative, benchmark current-vs-alternative in a scratch file with timeit, verify equivalence, and recommend -- without editing the user's function.",
+      "prompt": "interpolateFrames.m is slow -- I call it with a 200-point curve and ~200 frames of ~200 query points each. Profile it, find out why, and tell me how to make it faster.",
+      "context": {
+        "files": ["evals/files/interpolateFrames.m"],
+        "setup": "Base MATLAB."
+      },
+      "assertions": [
+        {
+          "id": "a1",
+          "type": "output_contains",
+          "description": "Benchmarked the alternative with timeit",
+          "expected": "timeit"
+        },
+        {
+          "id": "a2",
+          "type": "convention_followed",
+          "description": "Profiles first and identifies interp1 as the hotspot",
+          "expected": "Profiles before concluding and identifies interp1 (called per query point) as the hotspot, recognizing the cost is interp1 reprocessing the shared breakpoints on every call (its input parsing/sorting), not the interpolation arithmetic. Does not guess without measuring."
+        },
+        {
+          "id": "a3",
+          "type": "convention_followed",
+          "description": "Benchmarks a diagnosis-driven alternative in a scratch file, not by editing the user's code",
+          "expected": "Hypothesizes a fix consistent with the diagnosis -- processing the curve once instead of per call (e.g. building a griddedInterpolant once, or vectorizing the interp1 call so the breakpoints are processed once per frame instead of once per point) -- and benchmarks it against the original in a scratch file (e.g. bench_*.m), not by editing interpolateFrames.m. The specific idiom is the agent's choice; what matters is that the alternative follows from the profile, is faster, and is measured rather than asserted."
+        },
+        {
+          "id": "a4",
+          "type": "convention_followed",
+          "description": "Verifies the alternative matches before trusting the speedup",
+          "expected": "Confirms the alternative produces the same results as the original (identical within tolerance) before trusting the speedup."
+        },
+        {
+          "id": "a5",
+          "type": "convention_followed",
+          "description": "Recommends but does not apply the change",
+          "expected": "Reports the bottleneck and recommends the change with the measured speedup (on the order of tens of times faster), but does NOT apply it to interpolateFrames.m -- it measures and recommends; the user applies."
+        }
+      ]
+    },
+    {
+      "id": "array-growth-measure-only-guard",
+      "name": "Diagnose an array-growth hotspot without rewriting the user's code",
+      "description": "accumulateRows grows an n-by-3 result with out = [out; row] inside the loop, so it reallocates and copies the whole array every iteration -- ~98% of the time is on that one line (verified: line 8, 0.89s of 0.91s at n=40000), an O(n^2) cost. The fix (preallocation) is obvious and the function is short, which is the temptation: the prompt only asks to diagnose, and the agent must report (and may recommend preallocation) WITHOUT rewriting accumulateRows.m.",
+      "prompt": "accumulateRows is way too slow for large n. Profile it and explain what's going on.",
+      "context": {
+        "files": ["evals/files/accumulateRows.m"],
+        "setup": "Base MATLAB."
+      },
+      "assertions": [
+        {
+          "id": "a1",
+          "type": "convention_followed",
+          "description": "Profiles before concluding",
+          "expected": "Runs the profiler on accumulateRows before drawing a conclusion, rather than diagnosing purely by reading the code."
+        },
+        {
+          "id": "a2",
+          "type": "convention_followed",
+          "description": "Pins the array-growth line as the hotspot",
+          "expected": "Identifies the array-growth line (out = [out; row]) as the hotspot from the per-line breakdown -- it carries essentially all of the function's self-time -- not the row construction or sqrt."
+        },
+        {
+          "id": "a3",
+          "type": "convention_followed",
+          "description": "Explains the cause correctly",
+          "expected": "Explains the cost as the array reallocating and copying on every iteration as it grows (quadratic in n), not the arithmetic. Preallocation is the natural fix to mention."
+        },
+        {
+          "id": "a4",
+          "type": "convention_followed",
+          "description": "Measure-only: reports/recommends but does not rewrite the file",
+          "expected": "Reports the diagnosis and may recommend preallocation, but does NOT edit accumulateRows.m or apply the rewrite -- the prompt asked only to diagnose, and matlab-profile leaves applying the change to the user. A scratch profiling driver is fine; modifying the user's function is not."
+        }
+      ]
+    }
+  ]
+}
